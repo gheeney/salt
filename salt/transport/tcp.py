@@ -493,6 +493,7 @@ class AsyncTCPPubChannel(salt.transport.mixins.auth.AESPubClientMixin, salt.tran
                 stop_methods=[
                     'close',
                 ],
+                loop_kwarg='io_loop',
             )
             try:
                 req_channel.send(load, timeout=60)
@@ -500,6 +501,8 @@ class AsyncTCPPubChannel(salt.transport.mixins.auth.AESPubClientMixin, salt.tran
                 log.info('fire_master failed: master could not be contacted. Request timed out.')
             except Exception:
                 log.info('fire_master failed: %s', traceback.format_exc())
+            finally:
+                req_channel.stop()
         else:
             self._reconnected = True
 
@@ -585,6 +588,8 @@ class TCPReqServerChannel(salt.transport.mixins.auth.AESReqServerMixin, salt.tra
         if hasattr(self.req_server, 'stop'):
             try:
                 self.req_server.stop()
+            except socket.error as exc:
+                log.debug('TCPReqServerChannel close generated an exception: %s', str(exc))
             except Exception as exc:
                 log.exception('TCPReqServerChannel close generated an exception: %s', str(exc))
 
@@ -1453,24 +1458,30 @@ class TCPPubServerChannel(salt.transport.server.PubServerChannel):
         #pub_sock = salt.transport.ipc.IPCMessageClient(self.opts, io_loop=self.io_loop)
         pub_sock = salt.utils.asynchronous.SyncWrapper(
             salt.transport.ipc.IPCMessageClient,
-            (pull_uri,)
+            [pull_uri,],
+            async_methods=['connect',],
+            stop_methods=['close',],
+            loop_kwarg='io_loop',
         )
-        pub_sock.connect()
+        try:
+            pub_sock.connect()
 
-        int_payload = {'payload': self.serial.dumps(payload)}
+            int_payload = {'payload': self.serial.dumps(payload)}
 
-        # add some targeting stuff for lists only (for now)
-        if load['tgt_type'] == 'list':
-            if isinstance(load['tgt'], six.string_types):
-                # Fetch a list of minions that match
-                _res = self.ckminions.check_minions(load['tgt'],
-                                                    tgt_type=load['tgt_type'])
-                match_ids = _res['minions']
+            # add some targeting stuff for lists only (for now)
+            if load['tgt_type'] == 'list':
+                if isinstance(load['tgt'], six.string_types):
+                    # Fetch a list of minions that match
+                    _res = self.ckminions.check_minions(load['tgt'],
+                                                        tgt_type=load['tgt_type'])
+                    match_ids = _res['minions']
 
-                log.debug("Publish Side Match: %s", match_ids)
-                # Send list of miions thru so zmq can target them
-                int_payload['topic_lst'] = match_ids
-            else:
-                int_payload['topic_lst'] = load['tgt']
-        # Send it over IPC!
-        pub_sock.send(int_payload)
+                    log.debug("Publish Side Match: %s", match_ids)
+                    # Send list of miions thru so zmq can target them
+                    int_payload['topic_lst'] = match_ids
+                else:
+                    int_payload['topic_lst'] = load['tgt']
+            # Send it over IPC!
+            pub_sock.send(int_payload)
+        finally:
+            pub_sock.stop()

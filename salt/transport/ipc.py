@@ -625,9 +625,13 @@ class IPCMessageSubscriber(IPCClient):
                 if timeout is None:
                     wire_bytes = yield self._read_stream_future
                 else:
-                    wire_bytes = yield FutureWithTimeout(self.io_loop,
-                                                         self._read_stream_future,
-                                                         timeout)
+                    wire_bytes = yield tornado.gen.with_timeout(
+                        future=self._read_stream_future,
+                        timeout=self.io_loop.time() + timeout,
+                        quiet_exceptions=(
+                            StreamClosedError
+                        ),
+                    )
                 self._read_stream_future = None
 
                 # Remove the timeout once we get some data or an exception
