@@ -372,13 +372,15 @@ class SaltEvent(object):
         if self._run_io_loop_sync:
             with salt.utils.asynchronous.current_ioloop(self.io_loop):
                 if self.subscriber is None:
-                    self.subscriber = salt.transport.ipc.IPCMessageSubscriber(
-                        self.puburi,
-                        io_loop=self.io_loop
+                    self.subscriber = salt.utils.asynchronous.SyncWrapper(
+                        salt.transport.ipc.IPCMessageSubscriber,
+                        args=(self.puburi,),
+                        async_methods=['connect',],
+                        stop_methods=['close',],
+                        loop_kwarg='io_loop',
                     )
                 try:
-                    self.io_loop.run_sync(
-                        lambda: self.subscriber.connect(timeout=timeout))
+                    self.subscriber.connect(timeout=timeout)
                     self.cpub = True
                 except tornado.iostream.StreamClosedError:
                     log.trace("Subscriber connect saw stream closed.")
@@ -559,7 +561,7 @@ class SaltEvent(object):
                 if not self.cpub and not self.connect_pub(timeout=wait):
                     break
 
-                raw = self.subscriber.read_sync(timeout=wait)
+                raw = self.subscriber._read(timeout=wait)
                 if raw is None:
                     break
                 mtag, data = self.unpack(raw, self.serial)
