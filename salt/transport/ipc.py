@@ -608,13 +608,15 @@ class IPCMessageSubscriber(IPCClient):
         self._read_in_progress = Lock()
 
     @tornado.gen.coroutine
-    def _read(self, timeout, callback=None):
+    def _read(self, timeout, callback=None, no_log=False):
         try:
             yield self._read_in_progress.acquire(timeout=0.00000001)
         except tornado.gen.TimeoutError:
+            raise RuntimeError("Unable to acquire read lock")
             raise tornado.gen.Return(None)
 
-        log.debug('IPC Subscriber is starting reading')
+        if not no_log:
+            log.debug('IPC Subscriber is starting reading')
         exc_to_raise = None
         ret = None
         try:
@@ -652,7 +654,7 @@ class IPCMessageSubscriber(IPCClient):
                 if not first_sync_msg:
                     # We read at least one piece of data and we're on sync run
                     break
-        except TornadoTimeoutError:
+        except (tornado.gen.TimeoutError, TornadoTimeoutError):
             # In the timeout case, just return None.
             # Keep 'self._read_stream_future' alive.
             ret = None
@@ -671,7 +673,7 @@ class IPCMessageSubscriber(IPCClient):
             raise exc_to_raise  # pylint: disable=E0702
         raise tornado.gen.Return(ret)
 
-    def read_sync(self, timeout=None):
+    def read_sync(self, timeout=None, no_log=False):
         '''
         Read a message from an IPC socket
 
@@ -683,7 +685,7 @@ class IPCMessageSubscriber(IPCClient):
         '''
         if self._saved_data:
             return self._saved_data.pop(0)
-        return self.io_loop.run_sync(lambda: self._read(timeout))
+        return self.io_loop.run_sync(lambda: self._read(timeout, no_log=no_log))
 
     @tornado.gen.coroutine
     def read_async(self, callback):
